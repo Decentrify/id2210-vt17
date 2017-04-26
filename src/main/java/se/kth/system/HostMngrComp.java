@@ -43,75 +43,73 @@ import se.sics.ktoolbox.util.overlays.view.OverlayViewUpdatePort;
  */
 public class HostMngrComp extends ComponentDefinition {
 
-    private static final Logger LOG = LoggerFactory.getLogger(HostMngrComp.class);
-    private String logPrefix = " ";
+  private static final Logger LOG = LoggerFactory.getLogger(HostMngrComp.class);
+  private String logPrefix = " ";
 
-    //*****************************CONNECTIONS**********************************
-    Positive<Timer> timerPort = requires(Timer.class);
-    Positive<Network> networkPort = requires(Network.class);
-    //***************************EXTERNAL_STATE*********************************
-    private KAddress selfAdr;
-    private KAddress bootstrapServer;
-    private OverlayId croupierId;
-    //***************************INTERNAL_STATE*********************************
-    private Component bootstrapClientComp;
-    private Component overlayMngrComp;
-    private Component appMngrComp;
+  //*****************************CONNECTIONS**********************************
+  Positive<Timer> timerPort = requires(Timer.class);
+  Positive<Network> networkPort = requires(Network.class);
+  //***************************EXTERNAL_STATE*********************************
+  private KAddress selfAdr;
+  private KAddress bootstrapServer;
+  private OverlayId croupierId;
+  //***************************INTERNAL_STATE*********************************
+  private Component bootstrapClientComp;
+  private Component overlayMngrComp;
+  private Component appMngrComp;
 
-    public HostMngrComp(Init init) {
-        selfAdr = init.selfAdr;
-        logPrefix = "<nid:" + selfAdr.getId() + ">";
-        LOG.info("{}initiating...", logPrefix);
+  public HostMngrComp(Init init) {
+    selfAdr = init.selfAdr;
+    logPrefix = "<nid:" + selfAdr.getId() + ">";
+    LOG.info("{}initiating...", logPrefix);
 
-        bootstrapServer = init.bootstrapServer;
-        croupierId = init.croupierId;
+    bootstrapServer = init.bootstrapServer;
+    croupierId = init.croupierId;
 
-        subscribe(handleStart, control);
+    subscribe(handleStart, control);
+
+    connectBootstrapClient();
+    connectOverlayMngr();
+    connectApp();
+  }
+
+  Handler handleStart = new Handler<Start>() {
+    @Override
+    public void handle(Start event) {
+      LOG.info("{}starting...", logPrefix);
     }
+  };
 
-    Handler handleStart = new Handler<Start>() {
-        @Override
-        public void handle(Start event) {
-            LOG.info("{}starting...", logPrefix);
-            connectBootstrapClient();
-            connectOverlayMngr();
-            connectApp();
+  private void connectBootstrapClient() {
+    bootstrapClientComp = create(BootstrapClientComp.class, new BootstrapClientComp.Init(selfAdr, bootstrapServer));
+    connect(bootstrapClientComp.getNegative(Timer.class), timerPort, Channel.TWO_WAY);
+    connect(bootstrapClientComp.getNegative(Network.class), networkPort, Channel.TWO_WAY);
+  }
 
-            trigger(Start.event, bootstrapClientComp.control());
-            trigger(Start.event, overlayMngrComp.control());
-            trigger(Start.event, appMngrComp.control());
-        }
-    };
+  private void connectOverlayMngr() {
+    OverlayMngrComp.ExtPort extPorts = new OverlayMngrComp.ExtPort(timerPort, networkPort,
+      bootstrapClientComp.getPositive(CCHeartbeatPort.class));
+    overlayMngrComp = create(OverlayMngrComp.class, new OverlayMngrComp.Init((NatAwareAddress) selfAdr, extPorts));
+  }
 
-    private void connectBootstrapClient() {
-        bootstrapClientComp = create(BootstrapClientComp.class, new BootstrapClientComp.Init(selfAdr, bootstrapServer));
-        connect(bootstrapClientComp.getNegative(Timer.class), timerPort, Channel.TWO_WAY);
-        connect(bootstrapClientComp.getNegative(Network.class), networkPort, Channel.TWO_WAY);
+  private void connectApp() {
+    AppMngrComp.ExtPort extPorts = new AppMngrComp.ExtPort(timerPort, networkPort,
+      overlayMngrComp.getPositive(CroupierPort.class), overlayMngrComp.getNegative(OverlayViewUpdatePort.class));
+    appMngrComp = create(AppMngrComp.class, new AppMngrComp.Init(extPorts, selfAdr, croupierId));
+    connect(appMngrComp.getNegative(OverlayMngrPort.class), overlayMngrComp.getPositive(OverlayMngrPort.class),
+      Channel.TWO_WAY);
+  }
+
+  public static class Init extends se.sics.kompics.Init<HostMngrComp> {
+
+    public final KAddress selfAdr;
+    public final KAddress bootstrapServer;
+    public final OverlayId croupierId;
+
+    public Init(KAddress selfAdr, KAddress bootstrapServer, OverlayId croupierId) {
+      this.selfAdr = selfAdr;
+      this.bootstrapServer = bootstrapServer;
+      this.croupierId = croupierId;
     }
-
-    private void connectOverlayMngr() {
-        OverlayMngrComp.ExtPort extPorts = new OverlayMngrComp.ExtPort(timerPort, networkPort,
-                bootstrapClientComp.getPositive(CCHeartbeatPort.class));
-        overlayMngrComp = create(OverlayMngrComp.class, new OverlayMngrComp.Init((NatAwareAddress) selfAdr, extPorts));
-    }
-
-    private void connectApp() {
-        AppMngrComp.ExtPort extPorts = new AppMngrComp.ExtPort(timerPort, networkPort,
-                overlayMngrComp.getPositive(CroupierPort.class), overlayMngrComp.getNegative(OverlayViewUpdatePort.class));
-        appMngrComp = create(AppMngrComp.class, new AppMngrComp.Init(extPorts, selfAdr, croupierId));
-        connect(appMngrComp.getNegative(OverlayMngrPort.class), overlayMngrComp.getPositive(OverlayMngrPort.class), Channel.TWO_WAY);
-    }
-
-    public static class Init extends se.sics.kompics.Init<HostMngrComp> {
-
-        public final KAddress selfAdr;
-        public final KAddress bootstrapServer;
-        public final OverlayId croupierId;
-
-        public Init(KAddress selfAdr, KAddress bootstrapServer, OverlayId croupierId) {
-            this.selfAdr = selfAdr;
-            this.bootstrapServer = bootstrapServer;
-            this.croupierId = croupierId;
-        }
-    }
+  }
 }
